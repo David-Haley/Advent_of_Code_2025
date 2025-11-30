@@ -1,0 +1,19 @@
+# Object file
+*.o
+
+# Ada Library Information
+*.ali
+
+# Object file directory
+obj/
+
+# Project file
+*.xml
+/obj/
+/bin/
+/alire/
+/config/
+/obj/
+/bin/
+/alire/
+/config/
