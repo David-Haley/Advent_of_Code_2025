@@ -204,68 +204,55 @@ procedure December_10 is
 
    function Count_Presses_2 (Machine : Machines) return Natural is
 
-      type Queue_Elements is record
-         Joltage_State : Joltage_Stores.Vector;
-         To_Press : Control_States.Set;
-         Presses : Natural;
-      end record; -- Queue_Elements
+      procedure Search (Machine : Machines;
+                        Current : Joltage_Stores.Vector;
+                        Presses : Natural;
+                        Best : in out Natural) is
 
-      function Is_Possible (Machine : Machines;
-                            Current : Queue_Elements) return Boolean is
+         function Can_Press (Current : Joltage_Stores.Vector;
+                             Button : Control_States.Set) return Boolean is
 
-         --  Test that no Joltage is higher than the required value.
+         begin -- Can_Press
+            --  For testing and valid smantics
+            return True;
+         end Can_Press;
 
-         Result : Boolean := True;
+         Next : Joltage_Stores.Vector := Copy (Current);
 
-      begin -- Is_Possible
-         for I in Positive range 1 .. Last_Index (Machine.Joltage_Store) loop
-            Result := @ and then
-              Current.Joltage_State (I) <= Machine.Joltage_Store (I);
-         end loop; -- I in Positive range 1 ...
-         return Result;
-      end Is_Possible;
+      begin -- Search
+         Put_Line (Current'Img & Presses'Img);
+         if Current = Machine.Joltage_Store and then Presses < Best then
+            --  A solution found
+            Best := Presses;
+         elsif Presses < Best then
+            --  Continue search
+            for B in Iterate (Machine.Button_List) loop
+               if Can_Press (Current, Element (B)) then
+                  --  Dynamically set limits on button presses
+                  for J in Iterate (Element (B)) loop
+                     Next (Element (J) + 1) := Current (Element (J) + 1) + 1;
+                     --  Increment the required Joltages
+                  end loop; -- J in Iterate (Element (B))
+                  Search (Machine, Next, Presses + 1, Best);
+                  --  Restore Next to Current
+                  for J in Iterate (Element (B)) loop
+                     Next (Element (J) + 1) := Current (Element (J) + 1);
+                  end loop; -- J in Iterate (Element (B))
+               end if; -- Can_Press (Current, Element (B))
+            end loop; -- B in Iterate (Machine.Button_List)
+         end if; -- Current = Machine.Joltage_Store and then Presses < Best
+      end Search;
 
-      package Q_Int is new
-        Ada.Containers.Synchronized_Queue_Interfaces (Queue_Elements);
-
-      package Queues is new
-        Ada.Containers.Unbounded_Synchronized_Queues (Q_Int);
-
-      Queue : Queues.Queue;
-      Current, Next : Queue_Elements;
+      Best : Natural := Natural'Last;
+      Current : Joltage_Stores.Vector := Joltage_Stores.Empty_Vector;
 
    begin -- Count_Presses_2
-      Current := (Joltage_Stores.Empty_Vector, Control_States.Empty_Set, 0);
-      for I in Positive range 1 .. Last_Index (Machine.Joltage_Store) loop
-         Append (Current.Joltage_State, 0);
-      end loop; -- I in Positive range 1 .. Last_Index(Machine.Joltage_Store)
-      for B in Iterate (Machine.Button_List) loop
-         Current.To_Press := Copy (Element (B));
-         Queue.Enqueue (Current);
-      end loop; -- B in Iterate (Machine.Button_List)
-      loop -- until solved
-         if Queue.Current_Use = 0 then
-            raise Program_Error with "Queue empty no solution found";
-         end if; -- Queue.Current_Use = 0
-         Queue.Dequeue (Current);
-         for B in Iterate (Current.To_Press) loop
-            Current.Joltage_State (Element (B) + 1) :=
-              Current.Joltage_State (Element (B) + 1) + 1;
-         end loop; -- B in Iterate (Current.To_Press)
-         Current.Presses := @ + 1;
-         --  Press button increment Joltages
-         exit when Current.Joltage_State = Machine.Joltage_Store;
-         if Is_Possible (Machine, Current) then
-            Next.Presses := Current.Presses;
-            Next.Joltage_State := Copy (Current.Joltage_State);
-            for B in Iterate (Machine.Button_List) loop
-               Next.To_Press := Copy (Element (B));
-               Queue.Enqueue (Next);
-            end loop; -- B in Iterate (Machine.Button_List)
-         end if; -- Is_Possible (Machine, Current)
-      end loop; -- until solved
-      Put_Line (Current.Presses'Img);
-      return Current.Presses;
+      for J in Iterate (Machine.Joltage_Store) loop
+         Append (Current, 0);
+      end loop; -- J in Iterate (Machine.Joltage_Store)
+      Search (Machine, Current, 0, Best);
+      Put_Line (Best'Img);
+      return Best;
    end Count_Presses_2;
 
    Machine_Store : Machine_Stores.List := Machine_Stores.Empty_List;
