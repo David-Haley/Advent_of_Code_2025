@@ -123,19 +123,19 @@ procedure December_08 is
    procedure Build_Circuits (Box_Store : in out Box_Stores.Vector;
                              Pair_Store : Pair_Stores.List;
                              Circuit_Store : out Circuit_Stores.Vector;
-                             Max_Pairs : Positive) is
+                             Max_Pairs : Positive;
+                             P : out Pair_Stores.Cursor) is
 
-      P : Pair_Stores.Cursor := First (Pair_Store);
       Pair_Count : Natural := 0;
       Common : Box_Sets.Set;
 
    begin -- Build_Circuits
+      P := First (Pair_Store);
       Clear (Circuit_Store);
-      while P /= Pair_Stores.No_Element and then
-        Pair_Count < Max_Pairs loop
+      loop -- Until Max_Pairs have been processed
          Pair_Count := @ + 1;
          if Is_Empty (Intersection (Box_Store (Element (P).B1).Connected,
-           Box_Store (Element (P).B2).Connected))
+                      Box_Store (Element (P).B2).Connected))
          then
             --  Can be connected, no common junction box
             Common := Union (Box_Store (Element (P).B1).Connected,
@@ -146,8 +146,11 @@ procedure December_08 is
                Box_Store (Element (C)).Connected := Copy (Common);
             end loop; -- C in Iterate (Common)
          end if; --  Is_Empty (Intersection (Box_Store (Element (P).B1) ...
+         exit when Pair_Count >= Max_Pairs;
          Next (P);
-      end loop; -- P /= Pair_Stores.No_Element and then ...
+         --  it is assumed that Max_Pairs will be less that the total number of
+         --  pairs, an exception will be raised if this is not the case.
+      end loop; -- Until Max_Pairs have been processed
       for B in Iterate (Box_Store) loop
          if Find (Circuit_Store, Element (B).Connected) =
            Circuit_Stores.No_Element
@@ -158,18 +161,54 @@ procedure December_08 is
       Circuit_Sorting.Sort (Circuit_Store);
    end Build_Circuits;
 
+   function Build_Circuits (Box_Store : in out Box_Stores.Vector;
+                            Last_Pair : Pair_Stores.Cursor) return Distances is
+
+      --  This function finishes the job of connection all the junction boxes,
+      --  resuming where the procedure Build_Circuits (part 1 solution)
+      --  finished.
+
+      P : Pair_Stores.Cursor := Next (Last_Pair);
+      Common : Box_Sets.Set := Box_Sets.Empty_Set;
+      Common_Length : Count_Type := Length (Common);
+
+   begin -- Build_Circuits
+      loop -- Untill all junction boxes are connected
+         if Is_Empty (Intersection (Box_Store (Element (P).B1).Connected,
+                      Box_Store (Element (P).B2).Connected))
+         then
+            --  Can be connected, no common junction box
+            Common := Union (Box_Store (Element (P).B1).Connected,
+                             Box_Store (Element (P).B2).Connected);
+            Include (Common, Element (P).B1);
+            Include (Common, Element (P).B2);
+            Common_Length := Length (Common);
+            for C in Iterate (Common) loop
+               Box_Store (Element (C)).Connected := Copy (Common);
+            end loop; -- C in Iterate (Common)
+         end if; --  Is_Empty (Intersection (Box_Store (Element (P).B1) ...
+         exit when Common_Length >= Length (Box_Store);
+         --  The loop should terminate whilst there are more pairs to processs.
+         Next (P);
+      end loop; -- P /= Pair_Stores.No_Element and then ...
+      --  P should access the last pair to be connected.
+      return Box_Store (Element (P).B1).Position.X *
+        Box_Store (Element (P).B2).Position.X;
+   end Build_Circuits;
+
    Box_Store : Box_Stores.Vector := Box_Stores.Empty_Vector;
    Pair_Store : Pair_Stores.List := Pair_Stores.Empty_List;
    Circuit_Store : Circuit_Stores.Vector := Circuit_Stores.Empty_Vector;
    Max_Pairs : Positive;
+   Last_Pair : Pair_Stores.Cursor;
 
 begin -- December_08
    Read_Input (Box_Store, Max_Pairs);
    Build_Pair_Store (Box_Store, Pair_Store);
-   Build_Circuits (Box_Store, Pair_Store, Circuit_Store, Max_Pairs);
+   Build_Circuits (Box_Store, Pair_Store, Circuit_Store, Max_Pairs, Last_Pair);
    Put_Line ("Part one:" & Count_Type'Image (Length (Circuit_Store (1)) *
                Length (Circuit_Store (2)) * Length (Circuit_Store (3))));
    Put_CPU_Time;
-   Put_Line ("Part two:");
+   Put_Line ("Part two:" & Build_Circuits (Box_Store, Last_Pair)'Img);
    Put_CPU_Time;
 end December_08;
