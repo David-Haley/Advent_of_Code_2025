@@ -8,7 +8,8 @@ project Advent_Of_Code_2025 is
    for Main use ("december_01.adb", "december_02.adb", "december_03.adb",
                  "december_04.adb", "december_05.adb", "december_06.adb",
                  "december_07.adb", "december_07_claude.adb", "december_08.adb",
-                 "december_10.adb", "december_11.adb", "december_12.adb");
+                 "december_09.adb", "december_10.adb", "december_11.adb",
+				 "december_12.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use Advent_Of_Code_2025_Config.Ada_Compiler_Switches;

@@ -5,29 +5,25 @@ with Ada.Strings; use Ada.Strings;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Ada.Strings.Maps.Constants; use Ada.Strings.Maps.Constants;
 with Ada.Containers.Ordered_Maps;
-with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Doubly_Linked_Lists;
 with DJH.Execution_Time; use DJH.Execution_Time;
 
 procedure December_09 is
 
-   subtype Ordinates is Positive;
+   subtype Ordinates is Natural;
    type Coordinates is record
       X, Y : Ordinates;
    end record; -- Coordinates
 
-   function "<" (Left, Right : Coordinates) return Boolean is
-     (Left.X < Right.X or else (Left.X = Right.X and then Left.Y < Right.Y));
-
    package Red_Tile_Stores is new
-     Ada.Containers.Ordered_Sets (Coordinates);
+     Ada.Containers.Doubly_Linked_Lists (Coordinates);
    use Red_Tile_Stores;
 
    type Corner_Indices is (Top_Left, Top_Right, Bottom_Right, Bottom_Left);
 
    type Corners is array (Corner_Indices) of Coordinates;
 
-   subtype Areas is Long_Long_Integer range 1 .. Long_Long_Integer'Last;
+   subtype Areas is Long_Long_Integer range 0 .. Long_Long_Integer'Last;
 
    type Rectangles is record
       Corner : Corners;
@@ -43,7 +39,18 @@ procedure December_09 is
 
    package Rectangle_Sorting is new Rectangle_Stores.Generic_Sorting;
 
-   procedure Read_Input (Red_Tile_Store : out Red_Tile_Stores.Set) is
+   type Lines is record
+      L1, L2 : Ordinates;
+   end record; -- Lines
+
+   package Line_Lists is new Ada.Containers.Doubly_Linked_Lists (Lines);
+   use Line_Lists;
+
+   package Line_Stores is new
+     Ada.Containers.Ordered_Maps (Ordinates, Line_Lists.List);
+   use Line_Stores;
+
+   procedure Read_Input (Red_Tile_Store : out Red_Tile_Stores.List) is
 
       Input_File : File_Type;
       Text : Unbounded_String;
@@ -66,17 +73,13 @@ procedure December_09 is
          Start_At := Last + 1;
          Find_Token (Text, Decimal_Digit_Set, Start_At, Inside, First, Last);
          Coordinate.Y := Ordinates'Value (Slice (Text, First, Last));
-         Include (Red_Tile_Store, Coordinate);
+         Append (Red_Tile_Store, Coordinate);
       end loop; -- not End_Of_File (Input_File)
       Close (Input_File);
    end Read_Input;
 
-   procedure Largest (Red_Tile_Store : Red_Tile_Stores.Set;
+   procedure Largest (Red_Tile_Store : Red_Tile_Stores.List;
                       Rectangle_Store : out Rectangle_Stores.List) is
-
-      --  Note the sorting order of tile coordinates ensures that for all T,
-      --  T (N).X < T (N + K).X for all positive K. Rectangle corners are
-      --  arranged such that Corner (3).Y >= Corner (1).Y.
 
       function Area (T1, T2 : Coordinates) return Areas is
         (Areas (T2.X - T1.X + 1) * Areas (T2.Y - T1.Y + 1));
@@ -84,7 +87,7 @@ procedure December_09 is
       Rc1 : Red_Tile_Stores.Cursor := First (Red_Tile_Store);
       Rc2 : Red_Tile_Stores.Cursor;
       Rectangle : Rectangles;
-      Y_Low, Y_High : Ordinates;
+      X_Low, X_High, Y_Low, Y_High : Ordinates;
 
    begin -- Area
       Clear (Rectangle_Store);
@@ -92,6 +95,13 @@ procedure December_09 is
          Rc2 := Next (Rc1);
          exit when Rc2 = Red_Tile_Stores.No_Element;
          loop -- Rc2
+            if Element (Rc1).X < Element (Rc2).X then
+               X_Low := Element (Rc1).X;
+               X_High := Element (Rc2).X;
+            else
+               X_Low := Element (Rc2).X;
+               X_High := Element (Rc1).X;
+            end if; -- Element (Rc1).X < Element (Rc2).X
             if Element (Rc1).Y < Element (Rc2).Y then
                Y_Low := Element (Rc1).Y;
                Y_High := Element (Rc2).Y;
@@ -99,10 +109,10 @@ procedure December_09 is
                Y_Low := Element (Rc2).Y;
                Y_High := Element (Rc1).Y;
             end if; -- Element (Rc1).Y < Element (Rc2).Y
-            Rectangle.Corner (Top_Left) := (Element (Rc1).X, Y_Low);
-            Rectangle.Corner (Top_Right) := (Element (Rc2).X, Y_Low);
-            Rectangle.Corner (Bottom_Right) := (Element (Rc2).X, Y_High);
-            Rectangle.Corner (Bottom_Left) := (Element (Rc1).X, Y_High);
+            Rectangle.Corner (Top_Left) := (X_Low, Y_Low);
+            Rectangle.Corner (Top_Right) := (X_High, Y_Low);
+            Rectangle.Corner (Bottom_Right) := (X_High, Y_High);
+            Rectangle.Corner (Bottom_Left) := (X_Low, Y_High);
             Rectangle.Area := Area (Rectangle.Corner (Top_Left),
                                     Rectangle.Corner (Bottom_Right));
             Append (Rectangle_Store, Rectangle);
@@ -114,167 +124,179 @@ procedure December_09 is
       Rectangle_Sorting.Sort (Rectangle_Store);
    end Largest;
 
-   function Enclosed_Rectangle (Red_Tile_Store : Red_Tile_Stores.Set;
-                             Rectangle_Store : Rectangle_Stores.List)
-                             return Areas is
+   procedure Find_Lines (Red_Tile_Store : Red_Tile_Stores.List;
+                         Horizontal, Vertical : out Line_Stores.Map) is
 
-      subtype Range_Indices is Natural range 0 .. 1;
-      type Range_Elements is array (Range_Indices) of Ordinates;
+      Previous : Coordinates := Last_Element (Red_Tile_Store);
 
-      package Ranges is new
-        Ada.Containers.Doubly_Linked_Lists (Range_Elements);
-      use Ranges;
+   begin -- Find_Lines
+      Clear (Horizontal);
+      Clear (Vertical);
+      for R in Iterate (Red_Tile_Store) loop
+         if Previous.X = Element (R).X then
+            --  Vertical line
+            if not Contains (Vertical, Previous.X) then
+               Insert (Vertical, Previous.X, Line_Lists.Empty_List);
+            end if; -- not Contains (Vertical, Previous.X)
+            if Previous.Y < Element (R).Y then
+               Append (Vertical (Previous.X), (Previous.Y, Element (R).Y));
+            else
+               Append (Vertical (Previous.X), (Element (R).Y, Previous.Y));
+            end if; -- Previous.Y < Element (R).Y
+         elsif Previous.Y = Element (R).Y then
+            --  Horizontal Line
+            if not Contains (Horizontal, Previous.Y) then
+               Insert (Horizontal, Previous.Y, Line_Lists.Empty_List);
+            end if; -- not Contains (Horizontal, Previous.Y)
+            if Previous.X < Element (R).X then
+               Append (Horizontal (Previous.Y), (Previous.X, Element (R).X));
+            else
+               Append (Horizontal (Previous.Y), (Element (R).X, Previous.X));
+            end if; -- Previous.X < Element (R).X
+         else
+            raise Data_Error with "Not orthoginal line " & Previous'Img &
+              " to " & Element (R)'Img;
+         end if; -- Previous.X = Element (R).X
+         Previous := Element (R);
+      end loop; -- in Iterate (Red_Tile_Store)
+   end Find_Lines;
 
-      package Line_Lists is new
-        Ada.Containers.Ordered_Maps (Ordinates, Range_Element);
-      use Line_Lists;
+   function In_Line (Line_Store : Line_Stores.Map;
+                     Ordinate, Test : Ordinates) return Boolean is
 
-      procedure Find_Breaks (Red_Tile_Store : Red_Tile_Stores.Set;
-                             X_Break, Y_Break : out Breaks.Map) is
+      --  Returns True if Test is contained in a line segment at Ordinate.
 
-         --  Find intersections with horizontal and vertical lines.
+      Result : Boolean := False;
 
-         function Is_In_Line (Ordinate : Ordinates;
-                              Limit : Range_Elements) return Boolean is
-           (Ordinate in Limit (0) .. Limit (1));
-
-         package Lines is new
-           Ada.Containers.Ordered_Maps (Ordinates, Line_Lists.List);
-         use Lines;
-
-         Ends : Natural := 0;
-         Line, Limit : Range_Elements;
-         V_Line, H_Line : Lines.Map := Lines.Empty_Map;
-
-      begin -- Find_Breaks
-         for T in Iterate (Red_Tile_Store) loop
-            Include (V_Line, Element (T).X, Line_Lists.Empty_List);
-            Include (H_Line, Element (T).Y, Line_Lists.Empty_List);
-            Include (X_Break, Element (T).X,
-                     (Ordinates'Last, Ordinates'First));
-            Include (Y_Break, Element (T).Y,
-                     (Ordinates'Last, Ordinates'First));
-         end loop; -- T in Iterate (Red_Tile_Store)
-         for X in Iterate (V_Line) loop
-            Ends := 0;
-            for Y in Iterate (H_Line) loop
-               if Contains (Red_Tile_Store, (Key (X), Key (Y))) then
-                  Line (Ends mod 2) := Key (Y);
-                  if Ends mod 2 = 1 then
-                     Append (V_Line (Key (X)), Line);
-                  end if; -- Ends mod 2 = 1
-                  Ends := @ + 1;
-               end if; -- Contains (Red_Tile_Store, (Key (X), Key(Y)))
-            end loop; -- Y in Iterate (H_Line)
-         end loop; -- X in Iterate (V_Line)
-         for Y in Iterate (H_Line) loop
-            Ends := 0;
-            for X in Iterate (V_Line) loop
-               if Contains (Red_Tile_Store, (Key (X), Key (Y))) then
-                  Line (Ends mod 2) := Key (X);
-                  if Ends mod 2 = 1 then
-                     Append (H_Line (Key (Y)), Line);
-                  end if; -- Ends mod 2 = 1
-                  Ends := @ + 1;
-               end if; -- Contains (Red_Tile_Store, (Key (X), Key(Y)))
-            end loop; -- X in Iterate (V_Line)
-         end loop; -- Y in Iterate (H_Line)
-         for X in Iterate (X_Break) loop
-             --  Find Top limit
-            for Y in Iterate (H_Lines) loop
-               Limit (0) := Ordinates'Last;
-               for L in Iterate (Element (Y)) loop
-                  if Limit (0) = Ordinates'Last and then
-                    Is_In_Line (Key (X), Element (L)) then
-                     Limit (0) := Key (Y);
-                  end if; -- Limit (0) = Ordinates'Last and then ...
-               end loop; -- L in Iterate (Element (Y))
-            end loop; -- Y in Iterate (H_Lines)
-            ****
-            --  Find bottom limit
-         end loop; -- X in Iterate (X_Break)
-         --  Find left limit
-         --  Find right limit
-      end Find_Breaks;
-
-      function Is_Inside (Rectangle : Rectangles;
-                          X_Break, Y_Break : Breaks.Map) return Boolean is
-
-         Result : Boolean := True;
-         Line : Boolean;
-
-      begin -- Is_Inside
-         Put_Line ("Rectangle => " & Rectangle'Img);
-         Line := False;
-         for R in Iterate (X_Break (Rectangle.Corner (Top_Left).X)) loop
-            --  Check left
-            Line := @ or else
-              (Element (R) (0) <= Rectangle.Corner (Top_Left).Y
-               and then
-               Rectangle.Corner (Bottom_Left).Y <= Element (R) (1));
-            Put_Line ("Left" & Element (R)'Img & Line'Img);
-         end loop; -- R in Iterate (X_Break (Rectangle.Corner (Top_Left).X))
-         Result := @ and then Line;
-         Line := False;
-         for R in Iterate (X_Break (Rectangle.Corner (Top_Right).X)) loop
-            --  Check right
-            Line := @ or else
-              (Element (R) (0) <= Rectangle.Corner (Top_Right).Y
-               and then
-               Rectangle.Corner (Bottom_Right).Y <= Element (R) (1));
-            Put_Line ("Right" & Element (R)'Img & Line'Img);
-         end loop; -- R in Iterate (X_Break (Rectangle.Corner (Top_Right).X))
-         Result := @ and then Line;
-         Line := False;
-         for R in Iterate (Y_Break (Rectangle.Corner (Top_Left).Y)) loop
-            --  Check top
-            Line := @ or else
-              (Element (R) (0) <= Rectangle.Corner (Top_Left).X
-               and then
-               Rectangle.Corner (Top_Right).X <= Element (R) (1));
-            Put_Line ("Top" & Element (R)'Img & Line'Img);
-         end loop; -- R in Iterate (Y_Break (Rectangle.Corner (Top_Left).Y))
-         Result := @ and then Line;
-         Line := False;
-         for R in Iterate (Y_Break (Rectangle.Corner (Bottom_Left).Y)) loop
-            --  Check bottom
-            Line := @ or else
-              (Element (R) (0) <= Rectangle.Corner (Bottom_Left).X
-               and then
-               Rectangle.Corner (Bottom_Right).X <= Element (R) (1));
-            Put_Line ("Bottom" & Element (R)'Img & Line'Img);
-         end loop; -- R in Iterate (Y_Break (Rectangle.Corner (Bottom_Left).Y))
-         Result := @ and then Line;
+   begin -- In_Line
+      if Contains (Line_Store, Ordinate) then
+         for L in Iterate (Line_Store (Ordinate)) loop
+            Result := @ or else Test in Element (L).L1 .. Element (L).L2;
+         end loop; -- L in Iterate (Line_Store (Ordinate))
          return Result;
-      end Is_Inside;
-
-      Rc : Rectangle_Stores.Cursor := Last (Rectangle_Store);
-      X_Break, Y_Break : Breaks.Map := Breaks.Empty_Map;
-
-   begin -- Enclosed_Rectangle
-      Find_Breaks (Red_Tile_Store, X_Break, Y_Break);
-      Put_Line ("X_Break => " & X_Break'Img);
-      Put_Line ("Y_Break => " & Y_Break'Img);
-      while Rc /= Rectangle_Stores.No_Element and then
-       not Is_Inside (Element (Rc), X_Break, Y_Break) loop
-         Previous (Rc);
-      end loop; -- Rc /= Rectangle_Stores.No_Element and then
-      if Rc /= Rectangle_Stores.No_Element then
-         return Rectangle_Store (Rc).Area;
       else
-         return Areas'First;
-      end if; -- Rc /= Rectangle_Stores.No_Element
-   end Enclosed_Rectangle;
+         return False;
+      end if; -- Contains (Line_Store, Ordinate)
+   end In_Line;
 
-   Red_Tile_Store : Red_Tile_Stores.Set := Red_Tile_Stores.Empty_Set;
+   procedure Extend_Lines (Horizontal, Vertical : in out Line_Stores.Map) is
+
+      --  Extends lines internally to intersect with a perimeter line. The copy
+      --  of the perimeter is made to avoid extensions terminating at the
+      --  nearest internal line.
+
+      Outside_H : constant Line_Stores.Map := Copy (Horizontal);
+      Outside_V : constant Line_Stores.Map := Copy (Vertical);
+      Hc, Vc : Line_Stores.Cursor;
+
+   begin -- Extend_Lines
+      --  Extend Horizontal lines to intersection with vertical perimeter line
+      for H in Iterate (Horizontal) loop
+         Put_Line ("Horizontal" & Key (H)'Img);
+         for L in Iterate (Horizontal (H)) loop
+            Vc := Floor (Outside_V, Element (L).L1 - 1);
+            if Vc /= Line_Stores.No_Element then
+               Put_Line ("L1" & Key (Vc)'Img);
+            end if;
+            while Vc /= Line_Stores.No_Element and then
+              not In_Line (Outside_V, Key (Vc), Key (H)) loop
+               Previous (Vc);
+            end loop; -- Vc /= Line_Stores.No_Element and then ...
+            if Vc /= Line_Stores.No_Element and then
+              In_Line (Outside_V, Key (Vc), Key (H))
+            then
+               Horizontal (H) (L).L1 := Key (Vc);
+            end if; --  Vc /= Line_Stores.No_Element and then ...
+            Vc := Ceiling (Outside_V, Element (L).L2 + 1);
+            if Vc /= Line_Stores.No_Element then
+               Put_Line ("L2" & Key (Vc)'Img);
+            end if;
+            while Vc /= Line_Stores.No_Element and then
+              not In_Line (Outside_V, Key (Vc), Key (H)) loop
+               Next (Vc);
+            end loop; -- Vc /= Line_Stores.No_Element and then ...
+            if Vc /= Line_Stores.No_Element and then
+              In_Line (Outside_V, Key (Vc), Key (H))
+            then
+               Horizontal (H) (L).L2 := Key (Vc);
+            end if; -- Vc /= Line_Stores.No_Element and then ...
+         end loop; -- L in Iterate (Horizontal (H))
+      end loop; -- H in Iterate (Horizontal)
+      --  Extend Vertical Lines to intersection with horizontal perimiter line
+      for V in Iterate (Vertical) loop
+         Put_Line ("Vertical" & Key (V)'Img);
+         for L in Iterate (Vertical (V)) loop
+            Hc := Floor (Outside_H, Element (L).L1 - 1);
+            if Hc /= Line_Stores.No_Element then
+               Put_Line ("L1" & Key (Hc)'Img);
+            end if;
+            while Hc /= Line_Stores.No_Element and then
+              not In_Line (Outside_H, Key (Hc), Key (V)) loop
+               Previous (Hc);
+            end loop; -- Hc /= Line_Stores.No_Element and then ...
+            if Hc /= Line_Stores.No_Element and then
+              In_Line (Outside_H, Key (Hc), Key (V))
+            then
+               Vertical (V) (L).L1 := Key (Hc);
+            end if; -- Hc /= Line_Stores.No_Element and then ...
+            Hc := Ceiling (Outside_H, Element (L).L2 + 1);
+            if Hc /= Line_Stores.No_Element then
+               Put_Line ("L2" & Key (Hc)'Img);
+            end if;
+            while Hc /= Line_Stores.No_Element and then
+              not In_Line (Outside_H, Key (Hc), Key (V)) loop
+               Next (Hc);
+            end loop; -- Hc /= Line_Stores.No_Element and then ...
+            if Hc /= Line_Stores.No_Element and then
+              In_Line (Outside_H, Key (Hc), Key (V))
+            then
+               Vertical (V) (L).L2 := Key (Hc);
+            end if; -- Hc /= Line_Stores.No_Element and then ...
+         end loop; -- L in Iterate (Vertical (V))
+      end loop; -- V in Iterate (Vertical)
+   end Extend_Lines;
+
+   function Largest (Rectangle_Store : Rectangle_Stores.List;
+                     Horizontal, Vertical : Line_Stores.Map) return Areas is
+
+      R : Rectangle_Stores.Cursor := Last (Rectangle_Store);
+      All_Corners : Boolean;
+
+   begin -- Largest
+      loop -- Check one rectangle
+         All_Corners := True;
+         for C in Corner_Indices loop
+            All_Corners := @ and then
+              (In_Line (Horizontal, Element (R).Corner (C).Y,
+                        Element (R).Corner (C).X) or else
+               In_Line (Vertical, Element (R).Corner (C).X,
+                        Element (R).Corner (C).Y));
+         end loop; -- C in Corner_Indices
+         exit when All_Corners or else
+           Previous (R) = Rectangle_Stores.No_Element;
+         Previous (R);
+      end loop; -- Check one rectangle
+      if All_Corners then
+         return Element (R).Area;
+      else
+         return 0;
+      end if; -- All_Corners
+   end Largest;
+
+   Red_Tile_Store : Red_Tile_Stores.List := Red_Tile_Stores.Empty_List;
    Rectangle_Store : Rectangle_Stores.List := Rectangle_Stores.Empty_List;
+   Horizontal, Vertical : Line_Stores.Map := Line_Stores.Empty_Map;
 
 begin -- December_09
    Read_Input (Red_Tile_Store);
    Largest (Red_Tile_Store, Rectangle_Store);
    Put_Line ("Part one:" & Last_Element (Rectangle_Store).Area'Img);
    Put_CPU_Time;
+   Find_Lines (Red_Tile_Store, Horizontal, Vertical);
+   Extend_Lines (Horizontal, Vertical);
+   Put_Line (Horizontal'Img);
+   Put_Line (Vertical'Img);
    Put_Line ("Part two:" &
-               Enclosed_Rectangle (Red_Tile_Store, Rectangle_Store)'Img);
+               Largest (Rectangle_Store, Horizontal, Vertical)'Img);
    Put_CPU_Time;
 end December_09;
