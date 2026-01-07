@@ -161,122 +161,63 @@ procedure December_09 is
       end loop; -- in Iterate (Red_Tile_Store)
    end Find_Lines;
 
-   function In_Line (Line_Store : Line_Stores.Map;
-                     Ordinate, Test : Ordinates) return Boolean is
-
-      --  Returns True if Test is contained in a line segment at Ordinate.
-
-      Result : Boolean := False;
-
-   begin -- In_Line
-      if Contains (Line_Store, Ordinate) then
-         for L in Iterate (Line_Store (Ordinate)) loop
-            Result := @ or else Test in Element (L).L1 .. Element (L).L2;
-         end loop; -- L in Iterate (Line_Store (Ordinate))
-         return Result;
-      else
-         return False;
-      end if; -- Contains (Line_Store, Ordinate)
-   end In_Line;
-
-   procedure Extend_Lines (Horizontal, Vertical : in out Line_Stores.Map) is
-
-      --  Extends lines internally to intersect with a perimeter line. The copy
-      --  of the perimeter is made to avoid extensions terminating at the
-      --  nearest internal line.
-
-      Outside_H : constant Line_Stores.Map := Copy (Horizontal);
-      Outside_V : constant Line_Stores.Map := Copy (Vertical);
-      Hc, Vc : Line_Stores.Cursor;
-
-   begin -- Extend_Lines
-      --  Extend Horizontal lines to intersection with vertical perimeter line
-      for H in Iterate (Horizontal) loop
-         Put_Line ("Horizontal" & Key (H)'Img);
-         for L in Iterate (Horizontal (H)) loop
-            Vc := Floor (Outside_V, Element (L).L1 - 1);
-            if Vc /= Line_Stores.No_Element then
-               Put_Line ("L1" & Key (Vc)'Img);
-            end if;
-            while Vc /= Line_Stores.No_Element and then
-              not In_Line (Outside_V, Key (Vc), Key (H)) loop
-               Previous (Vc);
-            end loop; -- Vc /= Line_Stores.No_Element and then ...
-            if Vc /= Line_Stores.No_Element and then
-              In_Line (Outside_V, Key (Vc), Key (H))
-            then
-               Horizontal (H) (L).L1 := Key (Vc);
-            end if; --  Vc /= Line_Stores.No_Element and then ...
-            Vc := Ceiling (Outside_V, Element (L).L2 + 1);
-            if Vc /= Line_Stores.No_Element then
-               Put_Line ("L2" & Key (Vc)'Img);
-            end if;
-            while Vc /= Line_Stores.No_Element and then
-              not In_Line (Outside_V, Key (Vc), Key (H)) loop
-               Next (Vc);
-            end loop; -- Vc /= Line_Stores.No_Element and then ...
-            if Vc /= Line_Stores.No_Element and then
-              In_Line (Outside_V, Key (Vc), Key (H))
-            then
-               Horizontal (H) (L).L2 := Key (Vc);
-            end if; -- Vc /= Line_Stores.No_Element and then ...
-         end loop; -- L in Iterate (Horizontal (H))
-      end loop; -- H in Iterate (Horizontal)
-      --  Extend Vertical Lines to intersection with horizontal perimiter line
-      for V in Iterate (Vertical) loop
-         Put_Line ("Vertical" & Key (V)'Img);
-         for L in Iterate (Vertical (V)) loop
-            Hc := Floor (Outside_H, Element (L).L1 - 1);
-            if Hc /= Line_Stores.No_Element then
-               Put_Line ("L1" & Key (Hc)'Img);
-            end if;
-            while Hc /= Line_Stores.No_Element and then
-              not In_Line (Outside_H, Key (Hc), Key (V)) loop
-               Previous (Hc);
-            end loop; -- Hc /= Line_Stores.No_Element and then ...
-            if Hc /= Line_Stores.No_Element and then
-              In_Line (Outside_H, Key (Hc), Key (V))
-            then
-               Vertical (V) (L).L1 := Key (Hc);
-            end if; -- Hc /= Line_Stores.No_Element and then ...
-            Hc := Ceiling (Outside_H, Element (L).L2 + 1);
-            if Hc /= Line_Stores.No_Element then
-               Put_Line ("L2" & Key (Hc)'Img);
-            end if;
-            while Hc /= Line_Stores.No_Element and then
-              not In_Line (Outside_H, Key (Hc), Key (V)) loop
-               Next (Hc);
-            end loop; -- Hc /= Line_Stores.No_Element and then ...
-            if Hc /= Line_Stores.No_Element and then
-              In_Line (Outside_H, Key (Hc), Key (V))
-            then
-               Vertical (V) (L).L2 := Key (Hc);
-            end if; -- Hc /= Line_Stores.No_Element and then ...
-         end loop; -- L in Iterate (Vertical (V))
-      end loop; -- V in Iterate (Vertical)
-   end Extend_Lines;
-
    function Largest (Rectangle_Store : Rectangle_Stores.List;
                      Horizontal, Vertical : Line_Stores.Map) return Areas is
 
+      --  Check that no retangle side crosses the outside perometer line.
+
+      function Is_Inside (Line_Store : Line_Stores.Map;
+                          Ordinate : Ordinates;
+                          L1, L2 : Ordinates) return Boolean is
+
+         Lc : Line_Stores.Cursor := Floor (Line_Store, L1);
+         Result : Boolean := True;
+
+      begin -- Is_Inside
+         while Lc /= Line_Stores.No_Element and then Key (Lc) <= L2 and then
+           Result loop
+            for L in Iterate (Line_Store (Lc)) loop
+               Result := @ and then
+                 (((L1 = Key (Lc) or else L2 = Key (Lc)) and then
+                   Ordinate in Element (L).L1 .. Element (L).L2) or else
+               --  An end of the line represented by Ordinate, L1 and L2
+               --  is included in the line represented by L.
+                 not (Key (Lc) in L1 + 1 .. L2 - 1 and then
+                      Ordinate in Element (L).L1 .. Element (L).L2));
+               --  Does not have an intersection other than at the end
+            end loop; -- L in Iterate (Line_Store (Lc))
+            Next (Lc);
+         end loop; -- Lc /= Line_Stores.No_Element and then Key (Lc) <= L2 ...
+         return Result;
+      end Is_Inside;
+
       R : Rectangle_Stores.Cursor := Last (Rectangle_Store);
-      All_Corners : Boolean;
+      All_Sides : Boolean;
 
    begin -- Largest
       loop -- Check one rectangle
-         All_Corners := True;
-         for C in Corner_Indices loop
-            All_Corners := @ and then
-              (In_Line (Horizontal, Element (R).Corner (C).Y,
-                        Element (R).Corner (C).X) or else
-               In_Line (Vertical, Element (R).Corner (C).X,
-                        Element (R).Corner (C).Y));
-         end loop; -- C in Corner_Indices
-         exit when All_Corners or else
+         All_Sides :=
+           Is_Inside (Vertical,
+                      Element (R).Corner (Top_Left).Y,
+                      Element (R).Corner (Top_Left).X,
+                      Element (R).Corner (Top_Right).X) and then -- Top
+           Is_Inside (Vertical,
+                      Element (R).Corner (Bottom_Left).Y,
+                      Element (R).Corner (Bottom_Left).X,
+                      Element (R).Corner (Bottom_Right).X) and then -- Bottom
+           Is_Inside (Horizontal,
+                      Element (R).Corner (Top_Left).X,
+                      Element (R).Corner (Top_Left).Y,
+                      Element (R).Corner (Bottom_Left).Y) and then -- Left
+           Is_Inside (Horizontal,
+                      Element (R).Corner (Top_Right).X,
+                      Element (R).Corner (Top_Right).Y,
+                      Element (R).Corner (Bottom_Right).Y); -- Right
+         exit when All_Sides or else
            Previous (R) = Rectangle_Stores.No_Element;
          Previous (R);
       end loop; -- Check one rectangle
-      if All_Corners then
+      if All_Sides then
          return Element (R).Area;
       else
          return 0;
@@ -293,9 +234,6 @@ begin -- December_09
    Put_Line ("Part one:" & Last_Element (Rectangle_Store).Area'Img);
    Put_CPU_Time;
    Find_Lines (Red_Tile_Store, Horizontal, Vertical);
-   Extend_Lines (Horizontal, Vertical);
-   Put_Line (Horizontal'Img);
-   Put_Line (Vertical'Img);
    Put_Line ("Part two:" &
                Largest (Rectangle_Store, Horizontal, Vertical)'Img);
    Put_CPU_Time;
