@@ -20,12 +20,18 @@ procedure December_10 is
    package Control_States is new Ada.Containers.Ordered_Sets (Controls);
    use Control_States;
 
+   type Buttons is record
+      Control_State : Control_States.Set := Control_States.Empty_Set;
+      Min : Natural := Natural'Last;
+      Max : Natural := Natural'First;
+   end record; -- Buttons
+
    package Button_Lists is new
-     Ada.Containers.Doubly_Linked_Lists (Control_States.Set);
+     Ada.Containers.Doubly_Linked_Lists (Buttons);
    use Button_Lists;
 
-   function "<" (Left, Right : Control_States.Set) return Boolean is
-     (Length (Left) > Length (Right));
+   function "<" (Left, Right : Buttons) return Boolean is
+     (Length (Left.Control_State) > Length (Right.Control_State));
    --  The sorting order desired is that the buttons that do the most are
    --  tried first.
 
@@ -68,7 +74,6 @@ procedure December_10 is
             Last : Natural;
             Machine : Machines;
             Light_String : Unbounded_String;
-            Button_Set : Control_States.Set := Control_States.Empty_Set;
             Square_Set : constant Character_Set := To_Set ("[]");
             Round_Start : constant Character_Set := To_Set ("(");
             Curly_Start : constant Character_Set := To_Set ("{");
@@ -94,26 +99,32 @@ procedure December_10 is
             loop -- Read buttons
                Find_Token (Text, Round_Start, Start_At, Inside, First, Last);
                exit when Last = 0;
-               Clear (Button_Set);
-               Start_At := Last + 1;
-               loop -- Read one button
-                  Find_Token (Text, Decimal_Digit_Set, Start_At, Inside, First,
-                              Last);
+               declare -- Buttons
+                  Button : Buttons;
+               begin -- Buttons
                   Start_At := Last + 1;
-                  Include (Button_Set,
-                           Controls'Value (Slice (Text, First, Last)));
-                  case Element (Text, Start_At) is
+                  loop -- Read one button
+                     Find_Token (Text, Decimal_Digit_Set, Start_At, Inside,
+                                 First, Last);
+                     Start_At := Last + 1;
+                     Include (Button.Control_State,
+                              Controls'Value (Slice (Text, First, Last)));
+                     case Element (Text, Start_At) is
                      when ',' =>
                         null;
                      when ')' =>
-                        Append (Machine.Button_List, Button_Set);
+                        Append (Machine.Button_List, Button);
                         exit;
                         when others =>
                         raise Data_Error with "Expected ')' and found '" &
                           Element (Text, Start_At) & "'";
-                  end case; -- Element (Text, Start_At)
-               end loop; -- Read one button
+                     end case; -- Element (Text, Start_At)
+                  end loop; -- Read one button
+               end; -- Read one button
             end loop; -- Read buttons
+            Button_Sorting.Sort (Machine.Button_List);
+            --  Sorted such that the buttons that do the most are pressed
+            --  first.
             --  Read Joltages
             Find_Token (Text, Curly_Start, Start_At, Inside, First, Last);
             if Element (Text, First) = '{' then
@@ -127,9 +138,6 @@ procedure December_10 is
                            Last);
                exit when Last = 0;
                Start_At := Last + 1;
-               Button_Sorting.Sort (Machine.Button_List);
-               --  Sorted such that the buttons that do the most are pressed
-               --  first.
                Append (Machine.Joltage_Store,
                        Joltages'Value (Slice (Text, First, Last)));
             end loop; -- Read one Joltage
@@ -171,7 +179,7 @@ procedure December_10 is
       Current := (Control_States.Empty_Set, Control_States.Empty_Set,
                   Button_Lists.Empty_List, 0);
       for B in Iterate (Machine.Button_List) loop
-         Current.To_Press := Copy (Element (B));
+         Current.To_Press := Copy (Element (B).Control_State);
          Clear (Current.Can_Press);
          for C in Iterate (Machine.Button_List) loop
             if B /= C then
@@ -189,7 +197,7 @@ procedure December_10 is
          Next.Presses := Current.Presses;
          Next.Light_State := Copy (Current.Light_State);
          for B in Iterate (Current.Can_Press) loop
-            Next.To_Press := Copy (Element (B));
+            Next.To_Press := Copy (Element (B).Control_State);
             Clear (Next.Can_Press);
             for C in Iterate (Current.Can_Press) loop
                if B /= C then
@@ -227,18 +235,18 @@ procedure December_10 is
          elsif Presses < Best then
             --  Continue search
             for B in Iterate (Machine.Button_List) loop
-               if Can_Press (Current, Element (B)) then
+               if Can_Press (Current, Element (B).Control_State) then
                   --  Dynamically set limits on button presses
-                  for J in Iterate (Element (B)) loop
+                  for J in Iterate (Element (B).Control_State) loop
                      Next (Element (J) + 1) := Current (Element (J) + 1) + 1;
                      --  Increment the required Joltages
-                  end loop; -- J in Iterate (Element (B))
+                  end loop; -- J in Iterate (Element (B).Control_State)
                   Search (Machine, Next, Presses + 1, Best);
                   --  Restore Next to Current
-                  for J in Iterate (Element (B)) loop
+                  for J in Iterate (Element (B).Control_State) loop
                      Next (Element (J) + 1) := Current (Element (J) + 1);
-                  end loop; -- J in Iterate (Element (B))
-               end if; -- Can_Press (Current, Element (B))
+                  end loop; -- J in Iterate (Element (B).Control_State)
+               end if; -- Can_Press (Current, Element (B).Control_State)
             end loop; -- B in Iterate (Machine.Button_List)
          end if; -- Current = Machine.Joltage_Store and then Presses < Best
       end Search;
