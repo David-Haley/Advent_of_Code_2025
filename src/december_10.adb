@@ -9,8 +9,7 @@ with Ada.Containers; use Ada.Containers;
 with Ada.Containers.Ordered_Maps;
 with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Doubly_Linked_Lists;
-with Ada.Containers.Synchronized_Queue_Interfaces;
-with Ada.Containers.Unbounded_Synchronized_Queues;
+with Interfaces; use Interfaces;
 with DJH.Execution_Time; use DJH.Execution_Time;
 
 procedure December_10 is
@@ -29,11 +28,65 @@ procedure December_10 is
    package Button_Sets is new Ada.Containers.Ordered_Sets (Button_Indices);
    use Button_Sets;
 
+   package Button_Subsets is new
+     Ada.Containers.Doubly_Linked_Lists (Button_Sets.Set);
+   use Button_Subsets;
+
+   subtype Products is Long_Long_Integer range 0 .. Long_Long_Integer'Last;
+
+   type Button_Ranks is record
+      Button_Index : Button_Indices;
+      Product : Products;
+   end record; -- Button_Ranks;
+
+   package Button_Lists is new
+     Ada.Comtainers.Doubly_Linked_Lists (Button_Ranks);
+   use Button_Lists;
+
+   function "<" (Left, Right : Button_Ranks) return Boolean is
+     (Left.Product < Right.Product);
+
+   package Button_List_Sort is new Button_Lists.Generic_Sort;
+   use Button_List_Sort;
+
    subtype Joltages is Natural;
 
    package Joltage_Stores is new
      Ada.Containers.Ordered_Maps (Controls, Joltages);
    use Joltage_Stores;
+
+   function "<=" (Left, Right : Joltage_Stores.Map) return Boolean is
+
+      Result : Boolean := True;
+      Lc : Joltage_Stores.Cursor := First (Left);
+
+   begin -- "<="
+      if Length (Left) = Length (Right) then
+         while Result and then Lc /= Joltage_Stores.No_Element loop
+            Result := @ and then Element (Lc) <= Right (Key (Lc));
+            Next (Lc);
+         end loop; -- Result and then Lc /= Joltage_Stores.No_element
+      else
+         raise Program_Error with "Arguments of ""<"" are not equal length";
+      end if; -- Length (Left) = Length (Right)
+      return Result;
+   end "<=";
+
+   function "-" (Left, Right : Joltage_Stores.Map)
+                 return Joltage_Stores.Map is
+
+      Result : Joltage_Stores.Map := Joltage_Stores.Empty_Map;
+
+   begin -- "-"
+      if Length (Left) = Length (Right) then
+         for L in Iterate (Left) loop
+            Insert (Result, Key (L), Element (L) - Right (Key (L)));
+         end loop; -- L in Iterate (Left)
+      else
+         raise Program_Error with "Arguments of ""-"" are not equal length";
+      end if; -- Length (Left) = Length (Right)
+      return Result;
+   end "-";
 
    type Machines is record
       Light_State : Control_States.Set := Control_States.Empty_Set;
@@ -46,24 +99,13 @@ procedure December_10 is
    package Machine_Stores is new Ada.Containers.Doubly_Linked_Lists (Machines);
    use Machine_Stores;
 
-   type Buttons is record
-      Button_Index : Button_Indices;
-      Max_Presses : Presses;
-      Exact : Boolean;
-   end record; -- Buttons
+   type Actions is record
+      Pressed : Presses;
+      Jolts : Joltage_Stores.Map;
+   end record; -- Actions
 
-   package To_Press_Lists is new Ada.Containers.Doubly_Linked_Lists (Buttons);
-   use To_Press_Lists;
-
-   function "<" (Left, Right : Buttons) return Boolean is
-     (Left.Exact > Right.Exact or else
-     (Left.Exact > Right.Exact and then Left.Max_Presses < Right.Max_Presses));
-   --  The sorting order is to allow buttons with a known number of presses to
-   --  be processed first, followed by buttons with the smallest range of
-   --  presses.
-
-   package To_Press_Sorting is new To_Press_Lists.Generic_Sorting;
-   use To_Press_Sorting;
+   package Action_Lists is new Ada.Containers.Doubly_Linked_Lists (Actions);
+   use Action_Lists;
 
    procedure Read_Input (Machine_Store : out  Machine_Stores.List) is
 
@@ -169,171 +211,298 @@ procedure December_10 is
       Close (Input_File);
    end Read_Input;
 
+   procedure Generate_Subsets (Button_Set : Button_Sets.Set;
+                               Button_Subset : out Button_Subsets.List) is
+
+      subtype Generators is Unsigned_32
+        range 1 .. 2 ** Natural (Length (Button_Set)) - 1;
+      Mask : constant Generators := 1;
+      subtype Element_Indices is Natural range
+        0 .. Natural (Length (Button_Set) - 1);
+      Element_Array : array (Element_Indices) of Button_Indices;
+      Subset : Button_Sets.Set;
+      Bc : Button_Sets.Cursor := First (Button_Set);
+
+   begin -- Generate_Subsets
+      Clear (Button_Subset);
+      for B in Element_Indices loop
+         Element_Array (B) := Element (Bc);
+         Next (Bc);
+      end loop; -- B in Element_Indices
+      for G in Generators loop
+         Clear (Subset);
+         for B in Element_Indices loop
+            if (G and Shift_Left (Mask, B)) > 0 then
+               Include (Subset, Element_Array (B));
+            end if; -- (G and Shift_Left (Mask, B)) > 0
+         end loop; -- B in Element_Indices
+         Append (Button_Subset, Subset);
+      end loop; -- G in Generators
+   end Generate_Subsets;
+
    function Count_Presses (Machine : Machines) return Presses is
 
-      --  A key clue from Redit is that any button only needs to be pressed
-      --  once.
-
-      type Queue_Elements is record
-         Light_State : Control_States.Set;
-         To_Press : Button_Indices;
-         Can_Press : Button_Sets.Set;
-         Presses : Natural;
-      end record; -- Queue_Elements
-
-      package Q_Int is new
-        Ada.Containers.Synchronized_Queue_Interfaces (Queue_Elements);
-
-      package Queues is new
-        Ada.Containers.Unbounded_Synchronized_Queues (Q_Int);
-
-      Queue : Queues.Queue;
-      Current, Next : Queue_Elements;
+      Button_Set : Button_Sets.Set := Button_Sets.Empty_Set;
+      Button_Subset : Button_Subsets.List;
+      Best : Presses := Presses'Last;
+      Test : Control_States.Set;
 
    begin -- Count_Presses
-      Current := (Control_States.Empty_Set, Button_Indices'First,
-                  Button_Sets.Empty_Set, 0);
       for B in Iterate (Machine.Button_Map) loop
-         Current.To_Press := Key (B);
-         Clear (Current.Can_Press);
-         for C in Iterate (Machine.Button_Map) loop
-            if B /= C then
-               Include (Current.Can_Press, Key (C));
-            end if; -- C in Iterate (Machine.Button_Map)
-         end loop; -- C in Iterate (Machine.Button_Map)
-         Queue.Enqueue (Current);
+         Include (Button_Set, Key (B));
       end loop; -- B in Iterate (Machine.Button_Map)
-      loop -- until solved
-         Queue.Dequeue (Current);
-         Symmetric_Difference (Current.Light_State,
-                               Machine.Button_Map (Current.To_Press));
-         Current.Presses := @ + 1;
-         --  Press button toggle lights
-         exit when Current.Light_State = Machine.Light_State;
-         Next.Presses := Current.Presses;
-         Next.Light_State := Copy (Current.Light_State);
-         for B in Iterate (Current.Can_Press) loop
-            Next.To_Press := Element (B);
-            Next.Can_Press := Copy (Current.Can_Press);
-            Exclude (Next.Can_Press, Element (B));
-            Queue.Enqueue (Next);
-         end loop; -- B in Iterate (Machine.Button_Map)
-      end loop; -- until solved
-      return Current.Presses;
+      Generate_Subsets (Button_Set, Button_Subset);
+      for S in Iterate (Button_Subset) loop
+         Clear (Test);
+         for B in Iterate (Element (S)) loop
+            Symmetric_Difference (Test, Machine.Button_Map (Element (B)));
+         end loop; -- B in Iterate (Element (S))
+         if Test = Machine.Light_State and then
+           Presses (Length (Element (S))) < Best
+         then
+            Best := Presses (Length (Element (S)));
+         end if; -- Test = Machine.Light_State and then ...
+      end loop; -- S in Iterate (Button_Subset)
+      return Best;
    end Count_Presses;
-
-   procedure Press_Limits (Machine : Machines;
-                           Can_Press : Button_Sets.Set;
-                           Current : Joltage_Stores.Map;
-                           To_Press_List : out To_Press_Lists.List) is
-
-      subtype Jolt_Indices is Controls range Controls'First ..
-        Last_Key (Machine.Joltage_Store);
-
-      type Button_References is record
-         Count : Natural := 0;
-         Tc : To_Press_Lists.Cursor := To_Press_Lists.No_Element;
-      end record; -- Button_References
-
-      Button_Reference : array (Jolt_Indices) of Button_References;
-
-   begin -- Press_Limits
-      --  An upper bound on the number of times a button can be pressed is set
-      --  by the lowest Joltage that is to be increment. In some cases this may
-      --  be 0.
-      Clear (To_Press_List);
-      for B in Iterate (Can_Press) loop
-         Append (To_Press_List, (Element (B), Presses'Last, False));
-         for J in Iterate (Machine.Button_Map (Element (B))) loop
-            if Machine.Joltage_Store (Element (J)) - Current (Element (J))
-            < Last_Element (To_Press_List).Max_Presses
-            then
-               To_Press_List (Last (To_Press_List)).Max_Presses :=
-                 Machine.Joltage_Store (Element (J)) - Current (Element (J));
-            end if; -- Machine.Joltage_Store (Element (J)) < ...
-            Button_Reference (Element (J)).Count := @ + 1;
-            Button_Reference (Element (J)).Tc := Last (To_Press_List);
-         end loop; -- J in Iterate (Machine.Button_Map (Element (B)))
-      end loop; -- B in Iterate (Can_Press)
-      --  If only one button can set a particular Joltage, then the exact
-      --  number of presses reqired is known.
-      for J in Jolt_Indices loop
-         if Button_Reference (J).Count = 1 then
-            To_Press_List (Button_Reference (J).Tc).Exact := True;
-         end if; -- Button_Reference (J).Count = 1
-      end loop; -- J in Jolt_Indices
-      Sort (To_Press_List);
-   end Press_Limits;
-
-   procedure Press (Machine : Machines;
-                    Button : Button_Indices;
-                    Count : Presses;
-                    Current : Joltage_Stores.Map;
-                    Next : out Joltage_Stores.Map) is
-
-   begin -- Press
-      Next := Copy (Current);
-      for J in Iterate (Machine.Button_Map (Button)) loop
-         Next (Element (J)) := Next (Element (J)) + Count;
-      end loop;
-   end Press;
 
    function Count_Presses_2 (Machine : Machines) return Presses is
 
-      procedure Search (Machine : Machines;
-                        Current : Joltage_Stores.Map;
-                        Pressed : Presses;
-                        Can_Press : Button_Sets.Set;
-                        Best : in out Presses) is
+      procedure Find_Actions (Machine : Machines;
+                              Button_Subset : Button_Subsets.List;
+                              Reduced_State : Joltage_Stores.Map;
+                              Action_List : out Action_Lists.List) is
 
-         Next : Joltage_Stores.Map;
-         Next_To_Press : Button_Sets.Set := Copy (Can_Press);
-         To_Press_List : To_Press_Lists.List :=
-           To_Press_Lists.Empty_List;
-         Tc : To_Press_Lists.Cursor;
+         Target_Odd_State : Control_States.Set := Control_States.Empty_Set;
+         Test : Control_States.Set;
+         Action : Actions := (0, Joltage_Stores.Empty_Map);
+
+      begin -- Find_Actions
+         for R in Iterate (Reduced_State) loop
+            if Element (R) mod 2 /= 0 then
+               Insert (Target_Odd_State, Key (R));
+            end if; -- Element (R) mod 2 /= 0
+         end loop; -- R in Iterate (Reduced_State)
+         for J in Iterate (Machine.Joltage_Store) loop
+            Insert (Action.Jolts, Key (J), 0);
+         end loop; -- J in Iterate (Machine.Joltage_Store)
+         Clear (Action_List);
+         for S in Iterate (Button_Subset) loop
+            Clear (Test);
+            for B in Iterate (Element (S)) loop
+               Symmetric_Difference (Test, Machine.Button_Map (Element (B)));
+            end loop; -- B in Iterate (Element (S))
+            if Test = Target_Odd_State then
+               Action.Pressed := Presses (Length (Element (S)));
+               for J in Iterate (Action.Jolts) loop
+                  Action.Jolts (J) := 0;
+               end loop; -- Test = Target_Odd_State
+               for B in Iterate (Element (S)) loop
+                  for J in Iterate (Machine.Button_Map (Element (B))) loop
+                     Action.Jolts (Element (J)) :=
+                       Action.Jolts (Element (J)) + 1;
+                  end loop; -- J in Iterate (Machine.Button_Map (Element (B)))
+               end loop; -- B in Iterate (Element (S))
+               Append (Action_List, Action);
+            end if; -- Test = Target_Odd_State
+         end loop; -- S in Iterate (Button_Subset)
+      end Find_Actions;
+
+      function Half (Current : Joltage_Stores.Map) return Joltage_Stores.Map is
+
+         Result : Joltage_Stores.Map := Joltage_Stores.Empty_Map;
+
+      begin -- Half
+         for C in Iterate (Current) loop
+            Insert (Result, Key (C), Element (C) / 2);
+         end loop; -- C in Iterate (Current)
+         return Result;
+      end Half;
+
+      function Search (Machine : Machines;
+                       Button_Subset : Button_Subsets.List;
+                       Current : Joltage_Stores.Map) return Presses is
+
+         Best : Presses := Presses'Last;
 
       begin -- Search
-         --  Put_Line (Current'Img & Pressed'Img & Can_Press'Img);
-         if Current = Machine.Joltage_Store and then Pressed < Best then
-            --  A better solution found
-            Best := Pressed;
-         elsif Pressed < Best then
-            --  Continue search, solution not found and more presses are
-            --  available without exceeing Best.
-            Press_Limits (Machine, Can_Press, Current, To_Press_List);
-            Tc := First (To_Press_List);
-            if Tc /= To_Press_Lists.No_Element then
-               Exclude (Next_To_Press, Element (Tc).Button_Index);
-               if Element (Tc).Exact then
-                  Press (Machine, Element (Tc).Button_Index,
-                        Element (Tc).Max_Presses, Current, Next);
-                  Search (Machine, Next, Pressed + Element (Tc).Max_Presses,
-                        Next_To_Press, Best);
-               else
-                  for P in Presses range 0 .. Element (Tc).Max_Presses loop
-                     Press (Machine, Element (Tc).Button_Index, P, Current,
-                           Next);
-                     Search (Machine, Next, Pressed + P, Next_To_Press, Best);
-                  end loop; -- P in Presses range 0 .. Element (Tc).Max_Presses
-               end if; -- Element (Tc).Exact
-            end if; -- Tc /= To_Press_Lists.No_Element then
-         end if; -- Current = Machine.Joltage_Store and then Pressed < Best
+         if (for all J of Current => J = 0) then
+            --  Solved
+            Best := 0;
+         elsif (for all J of Current => J mod 2 = 0) then
+            declare -- Continue Search, all even
+               Local : Presses;
+            begin -- Continue Search, all even
+               Local := Search (Machine, Button_Subset, Half (Current));
+               if Local < Presses'Last and then 2 * Local < Best then
+                  Best := 2 * Local;
+               end if; -- Local < Presses'Last and then 2 * Local < Best
+            end;  -- Continue Search, all even
+         else
+            declare -- Continue Search, some odd values
+               Action_List : Action_Lists.List := Action_Lists.Empty_List;
+               Next : Joltage_Stores.Map;
+               Local : Presses;
+            begin -- Continue Search, some odd values
+               Find_Actions (Machine, Button_Subset, Current, Action_List);
+               for A in Iterate (Action_List) loop
+                  if Element (A).Jolts <= Current then
+                     Next := Half (Current - Element (A).Jolts);
+                     Local := Search (Machine, Button_Subset, Next);
+                     if Local < Presses'Last and then
+                       2 * Local + Element (A).Pressed < Best
+                     then
+                        Best := 2 * Local + Element (A).Pressed;
+                     end if; -- Local < Presses'Last and then ...
+                  end if; -- Element (A).Jolts < Current
+               end loop; -- A in Iterate (Action_List)
+            end; -- Continue Search, some odd values
+         end if; -- (for all J of Current => J = 0)
+         return Best;
       end Search;
 
-      Best : Presses := Presses'Last;
-      Current : Joltage_Stores.Map := Joltage_Stores.Empty_Map;
-      Can_Press : Button_Sets.Set := Button_Sets.Empty_Set;
+      function Search (Button_List_In : Button_Lists.List;
+                       Button_Map : Button_Maps.Map;
+                       Current : Joltage_Store.Map) return Presses is
+
+         procedure Update (Button_List : in out Button_Lists;
+                           Button_Map : Button_Maps.Map;
+                           Current : Joltage_Store.Map) is
+
+         begin -- Update
+            for B in Iterate (Button_List) loop
+               Button_List (B).Product := 1;
+               for J in Iterate (Button_Map (Element (B).Button_Index)) loop
+                  Button_List (B).Product :=
+                    Button_List (B).Product * Current (J);
+               end loop; -- J in Iterate (Button_Map (Element (B) ...
+            end loop; -- B in Iterate (Button_List)
+            Sort (Button_List);
+            while First_Element (Button_List) = 0 loop
+               Delete_First (Button_List);
+            end loop; -- First_Element (Button_List) = 0
+         end Update;
+
+         function Possible (Button_List : Button_Lists;
+                            Button_Map : Button_Maps.Map;
+                            Current : Joltage_Store.Map) return Boolean is
+
+            Can_Change, Non_Zero : Control_States := Control_States.Empty_Set;
+
+         begin -- Possible
+            for B in Iterate (Button_List) loop
+               Union (Can_Change, Button_Map (Element (B).Button_Index));
+            end loop; -- B in Iterate (Button_List)
+            for J in Iterate (Current) loop
+               if Element (J) > 0 then
+                  Include (Non_Zero, Key (J));
+               end if; -- Element (J) > 0
+            end loop; -- J in Iterate (Current)
+            --  Subset allows for a button in the list being pressed zero
+            --  times.
+            return Is_Subset (Non_Zero, Can_Change);
+         end Possible;
+
+         procedure Limit (Button_Index : Button_indices;
+                          Next_Button_List : Button_Lists.List;
+                          Button_Map : Button_Maps.Map;
+                          Current : Joltage_Store.Map;
+                          Lower, Upper : out Presses) is
+
+            Can_Change, Non_Zero : Control_States := Control_States.Empty_Set;
+
+         begin -- Limit
+            Upper := Presses'Last;
+            Lower := 0;
+            for J in Iterate (Button_Map (Button_Index)) loop
+               if Current (Element(J)) < Upper then
+                  Upper := Current (Element(J));
+               end if; -- Current (Element(J)) < Upper
+            end loop; -- J in Iterate (Button_Map (Button_Index))
+            for B in Iterate (Next_Button_List) loop
+               Union (Can_Change, Button_Map (Element (B).Button_Index));
+            end loop; -- B in Iterate (Button_List)
+            for J in Iterate (Current) loop
+               if Element (J) > 0 then
+                  Include (Non_Zero, Key (J));
+               end if; -- Element (J) > 0
+            end loop; -- J in Iterate (Current)
+            Can_Change := Intersection (Button_Map (Button_Index),
+                                        Non_Zero - Can_Change);
+            if Length (Can_Change) = 1 then
+               -- Only one button can increase a particular Joltage
+               Lower :=
+                 Current (First_Element (Button_Map (Button_Index)));
+               --  Potentially Upper could be less than Lower if the
+               --  button increases another Joltage that is less than this
+               --  Joltage.
+            end if; -- Length (Can_Change) = 1
+         end Limit;
+
+         function Next (P : Presses;
+                        Control_State: Control_States.Set;
+                        Current : Joltage_Store.Map)
+                        return Joltage_Stores.Map is
+
+            Result : Joltage_Store.Map := Copy (Current);
+
+         begin -- Next
+            for J in Iterate (Control_State) loop
+               Next (Element (J)) := Current (Element (J)) - Joltages (P);
+            end loop; -- J in Iterate (Control_State)
+         end Next;
+
+         Button_list : Button_Lists.List := Copy (Button_List_In);
+         Next_Button_List : Button_Lists.List;
+         Best : Presses := Presses'Last;
+         Button_Effect : Control_States;
+         Upper, Lower, Local : Presses;
+
+      begin -- Search
+         if (for all J of Current => J = 0) then
+            --  Solved
+            Best := 0;
+         else
+            --  Continue Search, testing one button at this level
+            Update (Button_list);
+            if Possible (Button_List, Button_Map, Current) then
+               Next_Button_List := Copy (Button_list);
+               Delete_First (Next_Button_List);
+               Button_Effect :
+                 Button_Map (First_Element (Button_list).Button_Index;
+               Limit (First_Element (Button_list).Button_Index,
+                      Next_Button_List, Button_Map, Current, Lower, Upper);
+               for P in Presses range Lower .. Upper loop
+                  Local := Search (Next_Button_List, Button_Map,
+                                   Next (P, Button_Effect, Current)));
+                  if Local < Presses'Last and then Local + P < Best then
+                     Best := Local + P;
+                  end if; -- Local + P < Best
+               end loop; -- P in Presses range Lower .. Upper
+            end if; -- Possible (Button_List, Button_Map, Current)
+         end if; -- (for all J of Current => J = 0)
+         return Best;
+      end Search;
+
+      Button_Set : Button_Sets.Set := Button_Sets.Empty_Set;
+      Button_Subset : Button_Subsets.List;
+      Button_List : Button_Lists.List := Button_Lists.Empty_List;
+      Best : Presses;
 
    begin -- Count_Presses_2
-      for J in Iterate (Machine.Joltage_Store) loop
-         Insert (Current, Key (J), 0);
-      end loop; -- J in Iterate (Machine.Joltage_Store)
       for B in Iterate (Machine.Button_Map) loop
-         Include (Can_Press, Key (B));
+         Include (Button_Set, Key (B));
       end loop; -- B in Iterate (Machine.Button_Map)
-      Search (Machine, Current, 0, Can_Press, Best);
-      Put_Line (Best'Img);
-      return Best;
+      Generate_Subsets (Button_Set, Button_Subset);
+      Best := Search (Machine, Button_Subset, Machine.Joltage_Store);
+      if Best < Presses'Last then
+         return Best;
+      else
+         for B in Iterate (Machine.Button_Map) loop
+            Append (Button_List, (Key (B)), 0);
+         end loop; -- in Iterate (Machine.Button_Map)
+         Best := Search (Button_List, Machine.Button_Map, Machine.Joltage_Store);
+      end if; -- Best < Presses'Last
    end Count_Presses_2;
 
    Machine_Store : Machine_Stores.List := Machine_Stores.Empty_List;
